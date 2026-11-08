@@ -15,6 +15,8 @@
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import { randomUUID } from "node:crypto";
+import { resolve as resolvePath } from "node:path";
+import { fileURLToPath } from "node:url";
 import { z } from "zod";
 
 // ---------------------------------------------------------------------------
@@ -174,7 +176,8 @@ async function settle(op: any, wait: boolean, timeoutSeconds: number) {
 // MCP plumbing
 // ---------------------------------------------------------------------------
 
-const server = new McpServer({ name: "instabox", version: VERSION });
+/** Exported so the Metorial entrypoint can reuse the exact same tool registry. */
+export const server = new McpServer({ name: "instabox", version: VERSION });
 
 function clip(s: string): string {
   return s.length <= MAX_OUTPUT ? s : s.slice(0, MAX_OUTPUT) + `\n… [truncated ${s.length - MAX_OUTPUT} characters]`;
@@ -922,7 +925,15 @@ async function main() {
   );
 }
 
-main().catch((e) => {
-  console.error("instabox-mcp failed to start:", e);
-  process.exit(1);
-});
+// Only attach the stdio transport when this file is the process entrypoint.
+// Metorial's Function Bay launcher imports the module instead of running it,
+// and wires the same server to its in-process adapter (see metorial.ts).
+const invokedDirectly =
+  process.argv[1] !== undefined && fileURLToPath(import.meta.url) === resolvePath(process.argv[1]);
+
+if (invokedDirectly) {
+  main().catch((e) => {
+    console.error("instabox-mcp failed to start:", e);
+    process.exit(1);
+  });
+}

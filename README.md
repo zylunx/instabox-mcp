@@ -186,6 +186,84 @@ INSTABOX_API_KEY=ibk_... node scripts/live-test.mjs dist/index.js <phase>
 
 Desktop/VNC control, SSH certificates (`/connections`), Vault items, file upload URLs and org/billing management are not exposed. Everything inside a machine can still be done with `instabox_exec`.
 
+## Deploy on Metorial
+
+Two Metorial custom-provider types can host this server. The repository ships
+the files for both. Docs: [custom providers](https://metorial.com/docs/build/custom-providers),
+[deploying custom providers](https://metorial.com/docs/build/custom-providers/managed-deployment),
+[Docker MCP servers](https://metorial.com/features/docker-mcp).
+
+### First: why a build can fail before any of your code runs
+
+Managed deployments (Git import or uploaded code) are built by Metorial's
+[`@function-bay/nodejs`](https://github.com/metorial/function-bay) builder. Its
+build script does, in order:
+
+1. `bun i -g @vercel/ncc typescript @types/node`
+2. `curl https://get.volta.sh | bash` — installs Volta into `~/.volta/bin`
+3. reads `function-bay.json` (fallback `metorial.json`)
+4. `volta install node@<nodeJsVersion>` with `PATH=$HOME/.volta/bin:$PATH`
+
+If step 2 cannot download the Volta release (HTTP 504 from GitHub releases), the
+pipeline still continues — `curl | bash` exits 0 — and step 4 dies with
+`volta: command not found` / exit 127. That is a **build-environment failure,
+before a single project file is read**; no repository change can fix it. Retry
+the deployment, wait for the platform to recover, or use Option B, which never
+runs Function Bay.
+
+A typical log for this failure:
+
+```text
+curl: (22) The requested URL returned error: 504
+Error: Could not download Volta version '2.0.2'
+Using Node.js version identifier: 24.x
+/usr/bin/bash: line 1: volta: command not found
+[Error function_bay.build_failed]: The build workflow run failed.
+```
+
+### Option A — Managed Node.js function (Git import / upload)
+
+[`function-bay.json`](function-bay.json) pins the build (it is read before
+`metorial.json`, rename the file if your Metorial setup expects that name):
+
+| Field | Value | Why |
+|---|---|---|
+| `entrypoint` | `dist/metorial.js` | Function Bay's generated launcher imports the entrypoint and calls its default / `handler` export with `event.payload`. A stdio entrypoint would attach stdin/stdout instead of exporting a handler. |
+| `nodeJsVersion` | `24.x` | Matches the builder's default runtime (`node:24`). |
+| `scripts.build` | `npm install --include=dev && npm run build` | Guarantees `tsc` is present even if the build environment sets `NODE_ENV=production`. |
+
+`src/metorial.ts` wraps the *same* `McpServer` with `@metorial/mcp-server`'s
+`serverAdapter`, which speaks the `metorial-mcp.*` message protocol used by
+Metorial's gateway (`clientAdapter` is the gateway side). `src/index.ts` still
+starts stdio, but only when it is the process entrypoint — importing it on
+Metorial no longer attaches a transport. Both paths therefore expose the same
+30 tools and 6 prompts.
+
+Set `INSTABOX_API_KEY` (and optionally `INSTABOX_API_URL`, `INSTABOX_READ_ONLY`,
+`INSTABOX_MAX_OUTPUT_CHARS`) in the provider's config/secrets in Metorial;
+never put the key in the repository.
+
+> The Function Bay launcher contract is not documented publicly. It is derived
+> from the generated `metorial_launcher.js` in `@function-bay/nodejs` and the
+> `clientAdapter` / `serverAdapter` pair in `@metorial/mcp-server` (currently a
+> pre-1.0 release). Both entrypoints are verified locally (`discover`,
+> `initialize`, `tools/list`, `prompts/list`), but a managed deployment still
+> requires a successful build on Metorial.
+
+### Option B — Container custom provider (no Function Bay)
+
+The [`Dockerfile`](Dockerfile) runs the plain stdio server unchanged, so
+Metorial can run it like any other containerized MCP server:
+
+```bash
+docker build -t ghcr.io/<owner>/instabox-mcp:latest .
+docker push ghcr.io/<owner>/instabox-mcp:latest
+```
+
+Create a **container** custom provider in Metorial, point it at that image and
+supply `INSTABOX_API_KEY` as a secret. This path does not use Volta or `ncc` at
+all, so the 504 above cannot affect it.
+
 ## Development
 
 ```bash

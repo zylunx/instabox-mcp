@@ -19,6 +19,9 @@ npm-debug.log*
 .vscode/
 *.swp
 
+# Local agent workspace data (not part of the project)
+.workbuddy/
+
 # Archives and scratch
 *.zip
 *.tgz

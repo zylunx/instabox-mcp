@@ -1,0 +1,7 @@
+{
+  "entrypoint": "dist/metorial.js",
+  "nodeJsVersion": "24.x",
+  "scripts": {
+    "build": "npm install --include=dev && npm run build"
+  }
+}
